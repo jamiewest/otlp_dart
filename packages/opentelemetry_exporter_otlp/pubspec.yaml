@@ -1,0 +1,20 @@
+name: opentelemetry_exporter_otlp
+description: OTLP exporter that mirrors OpenTelemetry.Exporter.OpenTelemetryProtocol.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+dependencies:
+  http: ^1.2.0
+  meta: ^1.10.0
+  opentelemetry_api:
+    path: ../opentelemetry_api
+  opentelemetry_sdk:
+    path: ../opentelemetry_sdk
+  opentelemetry_shared:
+    path: ../opentelemetry_shared
+    
+dev_dependencies:
+  lints: ^3.0.0
+  test: ^1.25.2

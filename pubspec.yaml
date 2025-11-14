@@ -1,0 +1,9 @@
+name: _
+publish_to: none
+environment:
+  sdk: ^3.6.0
+workspace:
+  - packages/opentelemetry_api
+  - packages/opentelemetry_sdk
+  - packages/opentelemetry_exporter_otlp
+  - packages/opentelemetry_exporter_console

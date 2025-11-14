@@ -1,0 +1,1 @@
+enum ExportResult { success, failure }

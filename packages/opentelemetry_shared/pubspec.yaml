@@ -1,0 +1,15 @@
+name: opentelemetry_shared
+description: Shared utilities for the OpenTelemetry Dart SDK and exporters.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+dependencies:
+  collection: ^1.18.0
+  meta: ^1.10.0
+  opentelemetry_api:
+    path: ../opentelemetry_api
+dev_dependencies:
+  lints: ^3.0.0
+  test: ^1.25.2
