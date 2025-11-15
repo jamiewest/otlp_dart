@@ -20,7 +20,22 @@ class IoHttpClient implements HttpClient {
     final response = await _client
         .post(uri, headers: headers, body: body)
         .timeout(timeout);
-    return HttpResponse(response.statusCode);
+
+    // Read body for non-success responses (for debugging)
+    String? responseBody;
+    if (response.statusCode >= 400) {
+      try {
+        responseBody = response.body;
+        // Limit body size to prevent memory issues
+        if (responseBody.length > 1000) {
+          responseBody = '${responseBody.substring(0, 1000)}... (truncated)';
+        }
+      } catch (_) {
+        // Ignore errors reading response body
+      }
+    }
+
+    return HttpResponse(response.statusCode, body: responseBody);
   }
 
   @override
