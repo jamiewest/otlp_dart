@@ -1,12 +1,14 @@
-import 'dart:async';
-import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:grpc/grpc.dart';
 import 'package:http/http.dart' as http;
-import 'package:opentelemetry_api/opentelemetry_api.dart';
-import 'package:opentelemetry_sdk/opentelemetry_sdk.dart';
-import 'package:opentelemetry_shared/opentelemetry_shared.dart';
+import 'package:opentelemetry/opentelemetry.dart';
+import 'package:shared/shared.dart';
+import 'package:otlp_dart/src/proto/opentelemetry/proto/collector/trace/v1/trace_service.pb.dart'
+    as otlp_trace_service;
 
 import 'otlp_encoding.dart';
+import 'otlp_grpc_sender.dart';
 import 'otlp_http_sender.dart';
 import 'otlp_options.dart';
 
@@ -15,13 +17,28 @@ class OtlpTraceExporter extends SpanExporter {
     OtlpExporterOptions? options,
     http.Client? httpClient,
     RetryPolicy? retryPolicy,
-  }) : _sender = OtlpHttpSender(
-          options: options ?? OtlpExporterOptions.forSignal(OtlpSignal.traces),
-          client: httpClient,
-          retryPolicy: retryPolicy,
-        );
+  }) : _options = options ?? OtlpExporterOptions.forSignal(OtlpSignal.traces) {
+    if (_options.protocol == OtlpProtocol.grpc) {
+      _grpcSender = OtlpGrpcSender<
+          otlp_trace_service.ExportTraceServiceRequest,
+          otlp_trace_service.ExportTraceServiceResponse>(
+        options: _options,
+        method: _traceExportMethod,
+        retryPolicy: retryPolicy,
+      );
+    } else {
+      _httpSender = OtlpHttpSender(
+        options: _options,
+        client: httpClient,
+        retryPolicy: retryPolicy,
+      );
+    }
+  }
 
-  final OtlpHttpSender _sender;
+  final OtlpExporterOptions _options;
+  OtlpHttpSender? _httpSender;
+  OtlpGrpcSender<otlp_trace_service.ExportTraceServiceRequest,
+      otlp_trace_service.ExportTraceServiceResponse>? _grpcSender;
   bool _isShutdown = false;
 
   @override
@@ -29,8 +46,12 @@ class OtlpTraceExporter extends SpanExporter {
     if (_isShutdown || spans.isEmpty) {
       return ExportResult.success;
     }
-    final payload = jsonEncode({'resourceSpans': _buildResourceSpans(spans)});
-    return _sender.send(payload);
+    final request = buildTraceRequest(spans);
+    if (_options.protocol == OtlpProtocol.grpc) {
+      return _grpcSender!.send(request);
+    }
+    final payload = Uint8List.fromList(request.writeToBuffer());
+    return _httpSender!.send(payload);
   }
 
   @override
@@ -39,105 +60,15 @@ class OtlpTraceExporter extends SpanExporter {
       return;
     }
     _isShutdown = true;
-    await _sender.shutdown();
+    await _grpcSender?.shutdown();
+    await _httpSender?.shutdown();
   }
 }
 
-List<Map<String, Object?>> _buildResourceSpans(List<SpanData> spans) {
-  final Map<Resource, Map<InstrumentationScope, List<SpanData>>> groups = {};
-  for (final span in spans) {
-    final scopeGroup =
-        groups.putIfAbsent(span.resource, () => <InstrumentationScope, List<SpanData>>{});
-    final bucket =
-        scopeGroup.putIfAbsent(span.instrumentationScope, () => <SpanData>[]);
-    bucket.add(span);
-  }
-
-  return groups.entries.map((resourceEntry) {
-    final resource = resourceEntry.key;
-    final scopeSpans = resourceEntry.value.entries.map((scopeEntry) {
-      return {
-        'scope': encodeInstrumentationScope(scopeEntry.key),
-        'spans': scopeEntry.value.map(_encodeSpan).toList(),
-      };
-    }).toList();
-
-    return {
-      'resource': {'attributes': encodeAttributes(resource.toMap())},
-      'scopeSpans': scopeSpans,
-    };
-  }).toList();
-}
-
-Map<String, Object?> _encodeSpan(SpanData span) {
-  return {
-    'traceId': hexToBase64(span.context.traceId.value),
-    'spanId': hexToBase64(span.context.spanId.value),
-    if (span.parentSpanContext != null)
-      'parentSpanId': hexToBase64(span.parentSpanContext!.spanId.value),
-    'name': span.name,
-    'kind': _mapSpanKind(span.kind),
-    'startTimeUnixNano': toUnixNanos(span.startTime),
-    'endTimeUnixNano': toUnixNanos(span.endTime),
-    'attributes': encodeAttributes(span.attributes.toMap()),
-    'events': span.events.map(_encodeEvent).toList(),
-    'links': span.links.map(_encodeLink).toList(),
-    'status': _encodeStatus(span.status),
-    'droppedAttributesCount': 0,
-    'droppedEventsCount': 0,
-    'droppedLinksCount': 0,
-    if (!span.context.traceState.isEmpty)
-      'traceState': span.context.traceState.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join(','),
-  };
-}
-
-Map<String, Object?> _encodeEvent(SpanEvent event) => {
-      'name': event.name,
-      'timeUnixNano': toUnixNanos(event.timestamp),
-      'attributes': encodeAttributes(event.attributes.toMap()),
-      'droppedAttributesCount': 0,
-    };
-
-Map<String, Object?> _encodeLink(Link link) => {
-      'traceId': hexToBase64(link.context.traceId.value),
-      'spanId': hexToBase64(link.context.spanId.value),
-      if (!link.context.traceState.isEmpty)
-        'traceState': link.context.traceState.entries
-            .map((e) => '${e.key}=${e.value}')
-            .join(','),
-      'attributes': encodeAttributes(link.attributes.toMap()),
-      'droppedAttributesCount': 0,
-    };
-
-Map<String, Object?> _encodeStatus(Status status) => {
-      'code': _mapStatusCode(status.statusCode),
-      if (status.description != null) 'message': status.description,
-    };
-
-int _mapSpanKind(SpanKind kind) {
-  switch (kind) {
-    case SpanKind.internal:
-      return 1;
-    case SpanKind.server:
-      return 2;
-    case SpanKind.client:
-      return 3;
-    case SpanKind.producer:
-      return 4;
-    case SpanKind.consumer:
-      return 5;
-  }
-}
-
-int _mapStatusCode(StatusCode status) {
-  switch (status) {
-    case StatusCode.unset:
-      return 0;
-    case StatusCode.ok:
-      return 1;
-    case StatusCode.error:
-      return 2;
-  }
-}
+final _traceExportMethod = ClientMethod<
+        otlp_trace_service.ExportTraceServiceRequest,
+        otlp_trace_service.ExportTraceServiceResponse>(
+  '/opentelemetry.proto.collector.trace.v1.TraceService/Export',
+  (request) => request.writeToBuffer(),
+  (bytes) => otlp_trace_service.ExportTraceServiceResponse.fromBuffer(bytes),
+);

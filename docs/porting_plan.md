@@ -8,7 +8,7 @@ keeping the overall naming and layering model:
     logs (Logger, LogRecord, severity), and metrics (Meter, instruments).
   - Context propagation helpers, attributes, baggage, propagator interfaces.
   - No SDK/runtime specific behavior. Works on VM & web (no dart:io).
-- `OpenTelemetry` (SDK) → `packages/opentelemetry_sdk`
+- `OpenTelemetry` (SDK) → `packages/opentelemetry`
   - Implements the API contracts plus processors, samplers, Resource, and
     instrumentation scope/identity abstractions.
   - Provides builders for tracer, logger, and meter providers mirroring the
@@ -18,9 +18,10 @@ keeping the overall naming and layering model:
     debugPrint.
 - `OpenTelemetry.Exporter.OpenTelemetryProtocol` →
   `packages/opentelemetry_exporter_otlp`
-  - Uses OTLP/HTTP+JSON payloads for traces, metrics, and logs.
-  - Mirrors .NET defaults for headers/environment overrides.
-- `Shared` → `packages/opentelemetry_shared`
+  - Supports OTLP/gRPC (HTTP/2) and OTLP/HTTP+Protobuf payloads for all signals.
+  - Mirrors .NET defaults for headers/environment overrides so Aspire scenarios
+    work out of the box.
+- `Shared` → `packages/shared`
   - Contains utilities reused by SDK/exporters (environment variable helpers,
     resource detectors, exponential retry policy, attribute validation).
 
@@ -28,8 +29,8 @@ keeping the overall naming and layering model:
 
 ```
 opentelemetry_exporter_console ┐
-opentelemetry_exporter_otlp     ├─> opentelemetry_sdk
-opentelemetry_sdk ─────────────┘         │
+opentelemetry_exporter_otlp     ├─> opentelemetry
+opentelemetry ────────────────┘         │
                                          └─> opentelemetry_api
 shared utilities ──────────────────────────────────────────────┘
 ```
@@ -37,7 +38,7 @@ shared utilities ─────────────────────
 Every library exposes a `library` entrypoint mirroring the .NET namespace:
 
 - `package:opentelemetry_api/opentelemetry_api.dart` → `OpenTelemetry.Api.*`
-- `package:opentelemetry_sdk/opentelemetry_sdk.dart` → `OpenTelemetry.*`
+- `package:opentelemetry/opentelemetry.dart` → `OpenTelemetry.*`
 - Exporters re-export their builders via `OpenTelemetry.Exporter.*` naming.
 
 ## Deliverables for the initial drop
@@ -47,7 +48,7 @@ Every library exposes a `library` entrypoint mirroring the .NET namespace:
 2. Provide SDK providers (trace/logs/metrics) with processors, samplers, meter
    readers, and default resource.
 3. Console exporter writing structured traces/metrics/logs.
-4. OTLP exporter using HTTP/JSON as a starting point for all signals.
+4. OTLP exporter supporting gRPC/HTTP2 plus HTTP/Protobuf for all signals.
 5. Shared package with environment configuration + retry/backoff helpers.
 6. Integration tests/examples to exercise recording data + exporting.
 

@@ -1,6 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:http/http.dart' as http;
-import 'package:opentelemetry_sdk/opentelemetry_sdk.dart';
-import 'package:opentelemetry_shared/opentelemetry_shared.dart';
+import 'package:opentelemetry/opentelemetry.dart';
+import 'package:shared/shared.dart';
 
 import 'otlp_options.dart';
 
@@ -32,11 +34,15 @@ class OtlpHttpSender {
   final bool _ownsClient;
   final RetryPolicy _retryPolicy;
 
-  Future<ExportResult> send(String payload) async {
+  Future<ExportResult> send(Uint8List payload) async {
     try {
       await _retryPolicy.execute((_) async {
+        final headers = {
+          'content-type': 'application/x-protobuf',
+          ..._options.headers,
+        };
         final response = await _client
-            .post(_options.endpoint, headers: _options.headers, body: payload)
+            .post(_options.endpoint, headers: headers, body: payload)
             .timeout(_options.timeout);
         if (_isSuccess(response.statusCode)) {
           return;

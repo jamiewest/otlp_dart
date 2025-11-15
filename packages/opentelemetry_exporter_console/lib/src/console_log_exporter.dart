@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:opentelemetry_api/opentelemetry_api.dart';
-import 'package:opentelemetry_sdk/opentelemetry_sdk.dart';
+import 'package:opentelemetry/opentelemetry.dart';
 
 import 'io/console_writer.dart';
 

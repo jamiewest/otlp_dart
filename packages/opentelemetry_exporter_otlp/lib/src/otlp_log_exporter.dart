@@ -1,11 +1,14 @@
-import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:grpc/grpc.dart';
 import 'package:http/http.dart' as http;
-import 'package:opentelemetry_api/opentelemetry_api.dart';
-import 'package:opentelemetry_sdk/opentelemetry_sdk.dart';
-import 'package:opentelemetry_shared/opentelemetry_shared.dart';
+import 'package:opentelemetry/opentelemetry.dart';
+import 'package:shared/shared.dart';
+import 'package:otlp_dart/src/proto/opentelemetry/proto/collector/logs/v1/logs_service.pb.dart'
+    as otlp_logs_service;
 
 import 'otlp_encoding.dart';
+import 'otlp_grpc_sender.dart';
 import 'otlp_http_sender.dart';
 import 'otlp_options.dart';
 
@@ -14,13 +17,28 @@ class OtlpLogExporter extends LogRecordExporter {
     OtlpExporterOptions? options,
     http.Client? httpClient,
     RetryPolicy? retryPolicy,
-  }) : _sender = OtlpHttpSender(
-          options: options ?? OtlpExporterOptions.forSignal(OtlpSignal.logs),
-          client: httpClient,
-          retryPolicy: retryPolicy,
-        );
+  }) : _options = options ?? OtlpExporterOptions.forSignal(OtlpSignal.logs) {
+    if (_options.protocol == OtlpProtocol.grpc) {
+      _grpcSender = OtlpGrpcSender<
+          otlp_logs_service.ExportLogsServiceRequest,
+          otlp_logs_service.ExportLogsServiceResponse>(
+        options: _options,
+        method: _logsExportMethod,
+        retryPolicy: retryPolicy,
+      );
+    } else {
+      _httpSender = OtlpHttpSender(
+        options: _options,
+        client: httpClient,
+        retryPolicy: retryPolicy,
+      );
+    }
+  }
 
-  final OtlpHttpSender _sender;
+  final OtlpExporterOptions _options;
+  OtlpHttpSender? _httpSender;
+  OtlpGrpcSender<otlp_logs_service.ExportLogsServiceRequest,
+      otlp_logs_service.ExportLogsServiceResponse>? _grpcSender;
   bool _isShutdown = false;
 
   @override
@@ -28,9 +46,12 @@ class OtlpLogExporter extends LogRecordExporter {
     if (_isShutdown || records.isEmpty) {
       return ExportResult.success;
     }
-    final payload = jsonEncode(
-        {'resourceLogs': _buildResourceLogs(records)});
-    return _sender.send(payload);
+    final request = buildLogRequest(records);
+    if (_options.protocol == OtlpProtocol.grpc) {
+      return _grpcSender!.send(request);
+    }
+    final payload = Uint8List.fromList(request.writeToBuffer());
+    return _httpSender!.send(payload);
   }
 
   @override
@@ -39,49 +60,15 @@ class OtlpLogExporter extends LogRecordExporter {
       return;
     }
     _isShutdown = true;
-    await _sender.shutdown();
+    await _grpcSender?.shutdown();
+    await _httpSender?.shutdown();
   }
 }
 
-List<Map<String, Object?>> _buildResourceLogs(List<LogRecord> records) {
-  final Map<Resource, Map<InstrumentationScope, List<LogRecord>>> groups = {};
-  for (final record in records) {
-    final scopeGroup = groups.putIfAbsent(
-        record.resource, () => <InstrumentationScope, List<LogRecord>>{});
-    final bucket = scopeGroup.putIfAbsent(
-        record.instrumentationScope, () => <LogRecord>[]);
-    bucket.add(record);
-  }
-
-  return groups.entries.map((resourceEntry) {
-    final resource = resourceEntry.key;
-    final scopeLogs = resourceEntry.value.entries.map((scopeEntry) {
-      return {
-        'scope': encodeInstrumentationScope(scopeEntry.key),
-        'logRecords': scopeEntry.value.map(_encodeLogRecord).toList(),
-      };
-    }).toList();
-
-    return {
-      'resource': {'attributes': encodeAttributes(resource.toMap())},
-      'scopeLogs': scopeLogs,
-    };
-  }).toList();
-}
-
-Map<String, Object?> _encodeLogRecord(LogRecord record) {
-  final spanContext = record.spanContext;
-  return {
-    'timeUnixNano': toUnixNanos(record.data.timestamp),
-    'observedTimeUnixNano': toUnixNanos(record.data.observedTimestamp),
-    'severityNumber': record.data.severity.number,
-    'severityText':
-        record.data.severityText ?? record.data.severity.name.toUpperCase(),
-    'body': {'stringValue': record.data.body},
-    'attributes': encodeAttributes(record.data.attributes.toMap()),
-    if (spanContext != null && spanContext.isValid)
-      'traceId': hexToBase64(spanContext.traceId.value),
-    if (spanContext != null && spanContext.isValid)
-      'spanId': hexToBase64(spanContext.spanId.value),
-  };
-}
+final _logsExportMethod = ClientMethod<
+        otlp_logs_service.ExportLogsServiceRequest,
+        otlp_logs_service.ExportLogsServiceResponse>(
+  '/opentelemetry.proto.collector.logs.v1.LogsService/Export',
+  (request) => request.writeToBuffer(),
+  (bytes) => otlp_logs_service.ExportLogsServiceResponse.fromBuffer(bytes),
+);

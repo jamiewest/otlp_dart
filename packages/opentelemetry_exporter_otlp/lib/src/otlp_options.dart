@@ -1,27 +1,49 @@
-import 'package:opentelemetry_shared/opentelemetry_shared.dart';
+import 'package:shared/shared.dart';
 
 enum OtlpSignal { traces, metrics, logs }
 
-class OtlpExporterOptions {
-  OtlpExporterOptions._(this.signal, this.endpoint, this.headers, this.timeout);
+enum OtlpProtocol { grpc, httpProtobuf }
 
-  factory OtlpExporterOptions.forSignal(OtlpSignal signal,
-      {Uri? endpoint,
-      Map<String, String>? headers,
-      Duration? timeout}) {
-    final resolvedEndpoint = endpoint ?? _resolveEndpoint(signal);
+class OtlpExporterOptions {
+  OtlpExporterOptions._(
+    this.signal,
+    this.protocol,
+    this.endpoint,
+    this.headers,
+    this.timeout,
+  );
+
+  factory OtlpExporterOptions.forSignal(
+    OtlpSignal signal, {
+    Uri? endpoint,
+    Map<String, String>? headers,
+    Duration? timeout,
+    OtlpProtocol? protocol,
+  }) {
+    final resolvedProtocol = protocol ?? _resolveProtocol(signal);
+    final resolvedEndpoint = endpoint ?? _resolveEndpoint(signal, resolvedProtocol);
     final resolvedHeaders = _buildHeaders(signal, headers);
     final resolvedTimeout = timeout ??
         Environment.getDuration('OTEL_EXPORTER_OTLP_TIMEOUT') ??
         const Duration(seconds: 10);
     return OtlpExporterOptions._(
-        signal, resolvedEndpoint, resolvedHeaders, resolvedTimeout);
+      signal,
+      resolvedProtocol,
+      resolvedEndpoint,
+      resolvedHeaders,
+      resolvedTimeout,
+    );
   }
 
   final OtlpSignal signal;
+  final OtlpProtocol protocol;
   final Uri endpoint;
   final Map<String, String> headers;
   final Duration timeout;
+
+  bool get useTls =>
+      endpoint.scheme.toLowerCase().startsWith('https') ||
+      endpoint.scheme.toLowerCase().startsWith('grpcs');
 }
 
 String _signalName(OtlpSignal signal) {
@@ -35,17 +57,52 @@ String _signalName(OtlpSignal signal) {
   }
 }
 
-Uri _resolveEndpoint(OtlpSignal signal) {
+OtlpProtocol _resolveProtocol(OtlpSignal signal) {
+  final signalName = _signalName(signal);
+  final specific =
+      Environment.getString('OTEL_EXPORTER_OTLP_${signalName}_PROTOCOL');
+  final general = Environment.getString('OTEL_EXPORTER_OTLP_PROTOCOL');
+  final candidate = specific ?? general;
+  if (candidate == null) {
+    return OtlpProtocol.grpc;
+  }
+  final parsed = _parseProtocol(candidate);
+  return parsed ?? OtlpProtocol.grpc;
+}
+
+OtlpProtocol? _parseProtocol(String raw) {
+  final value = raw.trim().toLowerCase();
+  switch (value) {
+    case 'grpc':
+      return OtlpProtocol.grpc;
+    case 'http/protobuf':
+    case 'http_protobuf':
+    case 'http':
+      return OtlpProtocol.httpProtobuf;
+    default:
+      return null;
+  }
+}
+
+Uri _resolveEndpoint(OtlpSignal signal, OtlpProtocol protocol) {
   final signalName = _signalName(signal);
   final specific =
       Environment.getString('OTEL_EXPORTER_OTLP_${signalName}_ENDPOINT');
   final general = Environment.getString('OTEL_EXPORTER_OTLP_ENDPOINT');
-  final defaultPath = _defaultPath(signal);
-  final raw = specific ?? general ?? 'http://localhost:4318$defaultPath';
+  final raw = specific ??
+      general ??
+      (protocol == OtlpProtocol.grpc
+          ? 'http://localhost:4317'
+          : 'http://localhost:4318${_defaultPath(signal)}');
   final uri = Uri.parse(raw);
-  if (uri.path.isEmpty || uri.path == '/') {
-    return uri.replace(path: defaultPath);
+
+  if (protocol == OtlpProtocol.httpProtobuf) {
+    final defaultPath = _defaultPath(signal);
+    if (uri.path.isEmpty || uri.path == '/') {
+      return uri.replace(path: defaultPath);
+    }
   }
+
   return uri;
 }
 
@@ -62,9 +119,7 @@ String _defaultPath(OtlpSignal signal) {
 
 Map<String, String> _buildHeaders(
     OtlpSignal signal, Map<String, String>? override) {
-  final entries = <String, String>{
-    'Content-Type': 'application/json',
-  };
+  final entries = <String, String>{};
   final signalName = _signalName(signal);
   final envHeaders = Environment.getString(
           'OTEL_EXPORTER_OTLP_${signalName}_HEADERS') ??
@@ -84,7 +139,7 @@ Map<String, String> _buildHeaders(
       if (key.isEmpty || value.isEmpty) {
         continue;
       }
-      entries[key] = value;
+      entries[Uri.decodeComponent(key)] = Uri.decodeComponent(value);
     }
   }
   if (override != null) {

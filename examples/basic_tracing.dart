@@ -1,5 +1,5 @@
 import 'package:opentelemetry_exporter_console/opentelemetry_exporter_console.dart';
-import 'package:opentelemetry_sdk/opentelemetry_sdk.dart';
+import 'package:opentelemetry/opentelemetry.dart';
 
 Future<void> main() async {
   final tracerProvider = SdkTracerProviderBuilder()

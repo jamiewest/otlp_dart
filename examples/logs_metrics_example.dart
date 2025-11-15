@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:opentelemetry_api/opentelemetry_api.dart';
 import 'package:opentelemetry_exporter_console/opentelemetry_exporter_console.dart';
-import 'package:opentelemetry_sdk/opentelemetry_sdk.dart';
+import 'package:opentelemetry/opentelemetry.dart';
 
 Future<void> main() async {
   final meterProvider = SdkMeterProviderBuilder()

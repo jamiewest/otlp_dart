@@ -1,16 +1,17 @@
-name: opentelemetry_exporter_console
-description: Console exporter mirroring OpenTelemetry.Exporter.Console.
+name: opentelemetry
+description: Dart port of the OpenTelemetry SDK for traces, metrics, and logs.
 version: 0.1.0
 publish_to: none
 resolution: workspace
 environment:
   sdk: ">=3.6.0 <4.0.0"
 dependencies:
+  collection: ^1.18.0
   meta: ^1.10.0
   opentelemetry_api:
     path: ../opentelemetry_api
-  opentelemetry:
-    path: ../opentelemetry
+  shared:
+    path: ../shared
 dev_dependencies:
   lints: ^3.0.0
   test: ^1.25.2

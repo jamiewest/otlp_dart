@@ -8,12 +8,15 @@ environment:
 dependencies:
   http: ^1.2.0
   meta: ^1.10.0
+  grpc: ^4.1.0
+  otlp_dart: ^0.1.0
+  fixnum: ^1.1.0
   opentelemetry_api:
     path: ../opentelemetry_api
-  opentelemetry_sdk:
-    path: ../opentelemetry_sdk
-  opentelemetry_shared:
-    path: ../opentelemetry_shared
+  opentelemetry:
+    path: ../opentelemetry
+  shared:
+    path: ../shared
     
 dev_dependencies:
   lints: ^3.0.0
