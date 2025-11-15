@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:opentelemetry_api/opentelemetry_api.dart';
+import 'package:shared/shared.dart';
 
 import 'export_result.dart';
 import 'sdk_span.dart';
@@ -51,18 +52,150 @@ class SimpleSpanProcessor implements SpanProcessor {
   Future<void> forceFlush() => _exporter.forceFlush();
 }
 
+/// A [SpanProcessor] that batches spans and exports them periodically.
+///
+/// This processor is recommended for production use as it:
+/// - Reduces network overhead by batching multiple spans
+/// - Minimizes latency impact on span completion
+/// - Provides bounded memory usage through queue size limits
+///
+/// The processor maintains an internal queue of spans and exports them when:
+/// - The batch size limit is reached
+/// - The scheduled timer fires
+/// - [forceFlush] is called
+/// - [shutdown] is called
+///
+/// ## Environment Variables
+///
+/// The processor can be configured using OpenTelemetry environment variables:
+/// - `OTEL_BSP_MAX_QUEUE_SIZE`: Maximum queue size (default: 2048)
+/// - `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`: Maximum batch size (default: 512)
+/// - `OTEL_BSP_SCHEDULE_DELAY`: Delay in milliseconds (default: 5000)
+/// - `OTEL_BSP_EXPORT_TIMEOUT`: Timeout in milliseconds (default: 30000)
+///
+/// Example:
+/// ```dart
+/// // Manual configuration
+/// final processor = BatchSpanProcessor(
+///   exporter,
+///   maxQueueSize: 2048,
+///   maxExportBatchSize: 512,
+///   scheduledDelay: Duration(seconds: 5),
+/// );
+///
+/// // From environment variables
+/// final processor = BatchSpanProcessor.fromEnvironment(exporter);
+/// ```
 class BatchSpanProcessor implements SpanProcessor {
+  static const int _defaultMaxQueueSize = 2048;
+  static const int _defaultMaxExportBatchSize = 512;
+  static const Duration _defaultScheduledDelay = Duration(milliseconds: 5000);
+  static const Duration _defaultExportTimeout = Duration(milliseconds: 30000);
+
+  /// Creates a [BatchSpanProcessor] with the given configuration.
+  ///
+  /// Parameters:
+  /// - [exporter]: The exporter to send batched spans to
+  /// - [maxQueueSize]: Maximum number of spans to queue (default: 2048)
+  /// - [maxExportBatchSize]: Maximum number of spans per batch (default: 512)
+  /// - [scheduledDelay]: Delay between periodic exports (default: 5000ms)
+  /// - [exportTimeout]: Timeout for export operations (default: 30000ms)
+  /// - [logger]: Optional logger for diagnostics
+  ///
+  /// Throws [ArgumentError] if configuration parameters are invalid.
   BatchSpanProcessor(
     this._exporter, {
-    int maxQueueSize = 2048,
-    int maxExportBatchSize = 512,
-    Duration scheduledDelay = const Duration(milliseconds: 5000),
-    Duration exportTimeout = const Duration(milliseconds: 30000),
+    int maxQueueSize = _defaultMaxQueueSize,
+    int maxExportBatchSize = _defaultMaxExportBatchSize,
+    Duration scheduledDelay = _defaultScheduledDelay,
+    Duration exportTimeout = _defaultExportTimeout,
+    TelemetryLogger? logger,
   })  : _maxQueueSize = maxQueueSize,
         _maxExportBatchSize = maxExportBatchSize,
         _scheduledDelay = scheduledDelay,
-        _exportTimeout = exportTimeout {
+        _exportTimeout = exportTimeout,
+        _logger = logger ?? const NoOpTelemetryLogger() {
+    // Validate configuration parameters
+    if (maxQueueSize <= 0) {
+      throw ArgumentError.value(
+        maxQueueSize,
+        'maxQueueSize',
+        'must be positive',
+      );
+    }
+    if (maxExportBatchSize <= 0) {
+      throw ArgumentError.value(
+        maxExportBatchSize,
+        'maxExportBatchSize',
+        'must be positive',
+      );
+    }
+    if (maxExportBatchSize > maxQueueSize) {
+      throw ArgumentError(
+        'maxExportBatchSize ($maxExportBatchSize) cannot exceed '
+        'maxQueueSize ($maxQueueSize)',
+      );
+    }
+    if (scheduledDelay.isNegative) {
+      throw ArgumentError.value(
+        scheduledDelay,
+        'scheduledDelay',
+        'cannot be negative',
+      );
+    }
+    if (exportTimeout.isNegative) {
+      throw ArgumentError.value(
+        exportTimeout,
+        'exportTimeout',
+        'cannot be negative',
+      );
+    }
+
+    _logger.debug(
+      'BatchSpanProcessor initialized: maxQueueSize=$maxQueueSize, '
+      'maxExportBatchSize=$maxExportBatchSize, '
+      'scheduledDelay=${scheduledDelay.inMilliseconds}ms, '
+      'exportTimeout=${exportTimeout.inMilliseconds}ms',
+    );
+
     _timer = Timer.periodic(_scheduledDelay, (_) => _exportBatch());
+  }
+
+  /// Creates a [BatchSpanProcessor] configured from environment variables.
+  ///
+  /// This factory method reads configuration from the following environment
+  /// variables, following the OpenTelemetry specification:
+  /// - `OTEL_BSP_MAX_QUEUE_SIZE`: Maximum queue size
+  /// - `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`: Maximum batch size
+  /// - `OTEL_BSP_SCHEDULE_DELAY`: Delay in milliseconds
+  /// - `OTEL_BSP_EXPORT_TIMEOUT`: Timeout in milliseconds
+  ///
+  /// If a variable is not set or invalid, the default value is used.
+  factory BatchSpanProcessor.fromEnvironment(
+    SpanExporter exporter, {
+    EnvironmentReader? envReader,
+    TelemetryLogger? logger,
+  }) {
+    final env = envReader ?? const EnvironmentReader();
+
+    final maxQueueSize = env.getInt('OTEL_BSP_MAX_QUEUE_SIZE') ??
+        _defaultMaxQueueSize;
+    final maxExportBatchSize =
+        env.getInt('OTEL_BSP_MAX_EXPORT_BATCH_SIZE') ??
+            _defaultMaxExportBatchSize;
+    final scheduledDelayMs = env.getInt('OTEL_BSP_SCHEDULE_DELAY') ??
+        _defaultScheduledDelay.inMilliseconds;
+    final exportTimeoutMs = env.getInt('OTEL_BSP_EXPORT_TIMEOUT') ??
+        _defaultExportTimeout.inMilliseconds;
+
+    return BatchSpanProcessor(
+      exporter,
+      maxQueueSize: maxQueueSize,
+      maxExportBatchSize: maxExportBatchSize,
+      scheduledDelay: Duration(milliseconds: scheduledDelayMs),
+      exportTimeout: Duration(milliseconds: exportTimeoutMs),
+      logger: logger,
+    );
   }
 
   final SpanExporter _exporter;
@@ -70,12 +203,30 @@ class BatchSpanProcessor implements SpanProcessor {
   final int _maxExportBatchSize;
   final Duration _scheduledDelay;
   final Duration _exportTimeout;
+  final TelemetryLogger _logger;
 
   final Queue<SpanData> _queue = Queue<SpanData>();
   Timer? _timer;
   bool _isShutdown = false;
   Completer<void>? _flushCompleter;
   bool _isExporting = false;
+
+  // Metrics
+  int _droppedSpans = 0;
+  int _exportedBatches = 0;
+  int _failedExports = 0;
+
+  /// Number of spans dropped due to queue being full.
+  int get droppedSpans => _droppedSpans;
+
+  /// Number of batches successfully exported.
+  int get exportedBatches => _exportedBatches;
+
+  /// Number of export operations that failed.
+  int get failedExports => _failedExports;
+
+  /// Current number of spans in the queue.
+  int get queueSize => _queue.length;
 
   @override
   void onStart(ReadableSpan span, Context parentContext) {}
@@ -88,6 +239,14 @@ class BatchSpanProcessor implements SpanProcessor {
 
     if (_queue.length >= _maxQueueSize) {
       // Drop span when queue is full
+      _droppedSpans++;
+      if (_droppedSpans == 1 || _droppedSpans % 1000 == 0) {
+        _logger.warning(
+          'Span queue is full (size: $_maxQueueSize). '
+          'Dropped $_droppedSpans spans so far. '
+          'Consider increasing maxQueueSize or reducing span creation rate.',
+        );
+      }
       return;
     }
 
@@ -123,10 +282,38 @@ class BatchSpanProcessor implements SpanProcessor {
       }
 
       if (batch.isNotEmpty) {
+        _logger.debug('Exporting batch of ${batch.length} spans');
         try {
-          await _exporter.export(batch).timeout(_exportTimeout);
-        } catch (e) {
-          // Log error but continue processing
+          final result = await _exporter.export(batch).timeout(_exportTimeout);
+          if (result == ExportResult.success) {
+            _exportedBatches++;
+            _logger.debug(
+              'Successfully exported batch of ${batch.length} spans '
+              '(total batches: $_exportedBatches)',
+            );
+          } else {
+            _failedExports++;
+            _logger.error(
+              'Failed to export batch of ${batch.length} spans. '
+              'Exporter returned failure. '
+              'Total failed exports: $_failedExports',
+            );
+          }
+        } on TimeoutException catch (e, stackTrace) {
+          _failedExports++;
+          _logger.error(
+            'Export timeout after ${_exportTimeout.inMilliseconds}ms '
+            'for batch of ${batch.length} spans',
+            e,
+            stackTrace,
+          );
+        } catch (e, stackTrace) {
+          _failedExports++;
+          _logger.error(
+            'Exception during export of batch with ${batch.length} spans',
+            e,
+            stackTrace,
+          );
         }
       }
 
@@ -143,22 +330,29 @@ class BatchSpanProcessor implements SpanProcessor {
   @override
   Future<void> forceFlush() async {
     if (_isShutdown) {
+      _logger.warning('forceFlush called on shutdown processor');
       return;
     }
+
+    _logger.debug('Force flushing BatchSpanProcessor');
+    final startQueueSize = _queue.length;
 
     while (_queue.isNotEmpty) {
       await _exportBatch();
     }
 
     await _exporter.forceFlush();
+    _logger.debug('Force flush completed ($startQueueSize spans flushed)');
   }
 
   @override
   Future<void> shutdown() async {
     if (_isShutdown) {
+      _logger.debug('Shutdown called on already shutdown processor');
       return;
     }
 
+    _logger.info('Shutting down BatchSpanProcessor');
     _isShutdown = true;
 
     // Cancel timer first
@@ -171,11 +365,19 @@ class BatchSpanProcessor implements SpanProcessor {
     }
 
     // Export remaining spans
+    final remainingSpans = _queue.length;
     while (_queue.isNotEmpty) {
       await _exportBatch();
     }
 
     await _exporter.shutdown();
+
+    _logger.info(
+      'BatchSpanProcessor shutdown complete. '
+      'Statistics: exported=$_exportedBatches batches, '
+      'failed=$_failedExports exports, dropped=$_droppedSpans spans, '
+      'flushed on shutdown=$remainingSpans spans',
+    );
   }
 }
 

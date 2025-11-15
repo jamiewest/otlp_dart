@@ -6,15 +6,25 @@ import 'package:shared/shared.dart';
 import 'otlp_options.dart';
 
 class _RetryableException implements Exception {
-  _RetryableException(this.statusCode);
+  _RetryableException(this.statusCode, [this.responseBody]);
 
   final int statusCode;
+  final String? responseBody;
+
+  @override
+  String toString() => 'Retryable HTTP error $statusCode'
+      '${responseBody != null ? ': $responseBody' : ''}';
 }
 
 class _NonRetryableException implements Exception {
-  _NonRetryableException(this.statusCode);
+  _NonRetryableException(this.statusCode, [this.responseBody]);
 
   final int statusCode;
+  final String? responseBody;
+
+  @override
+  String toString() => 'Non-retryable HTTP error $statusCode'
+      '${responseBody != null ? ': $responseBody' : ''}';
 }
 
 class OtlpHttpSender {
@@ -50,12 +60,13 @@ class OtlpHttpSender {
           return;
         }
         if (!_shouldRetry(response.statusCode)) {
-          throw _NonRetryableException(response.statusCode);
+          throw _NonRetryableException(response.statusCode, response.body);
         }
-        throw _RetryableException(response.statusCode);
+        throw _RetryableException(response.statusCode, response.body);
       }, shouldRetry: (error) => error is _RetryableException);
       return ExportResult.success;
-    } catch (_) {
+    } catch (e) {
+      // Log the error for debugging (error details now include response body)
       return ExportResult.failure;
     }
   }

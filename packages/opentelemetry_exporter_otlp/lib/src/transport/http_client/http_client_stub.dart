@@ -13,8 +13,12 @@ abstract class HttpClient {
 }
 
 class HttpResponse {
-  HttpResponse(this.statusCode);
+  HttpResponse(this.statusCode, {this.body});
+
   final int statusCode;
+  final String? body;
+
+  bool get isSuccess => statusCode >= 200 && statusCode < 300;
 }
 
 HttpClient createHttpClient() =>
