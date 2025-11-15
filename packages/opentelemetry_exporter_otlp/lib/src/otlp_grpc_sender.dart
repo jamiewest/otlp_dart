@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:grpc/grpc.dart';
 import 'package:grpc/grpc_or_grpcweb.dart';
+import 'package:grpc/src/client/client.dart' show Client;
+import 'package:grpc/src/client/method.dart' show ClientMethod;
 import 'package:opentelemetry/opentelemetry.dart';
 import 'package:shared/shared.dart';
 

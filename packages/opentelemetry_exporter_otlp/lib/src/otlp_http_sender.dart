@@ -1,9 +1,8 @@
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
+import 'transport/http_client/http_client.dart';
 import 'package:opentelemetry/opentelemetry.dart';
 import 'package:shared/shared.dart';
-
 import 'otlp_options.dart';
 
 class _RetryableException implements Exception {
@@ -21,16 +20,16 @@ class _NonRetryableException implements Exception {
 class OtlpHttpSender {
   OtlpHttpSender({
     required OtlpExporterOptions options,
-    http.Client? client,
+    HttpClient? client,
     RetryPolicy? retryPolicy,
   })  : _options = options,
-        _client = client ?? http.Client(),
+        _client = client ?? createHttpClient(),
         _ownsClient = client == null,
         _retryPolicy = retryPolicy ??
             const RetryPolicy(maxAttempts: 5, initialBackoff: Duration(milliseconds: 500));
 
   final OtlpExporterOptions _options;
-  final http.Client _client;
+  final HttpClient _client;
   final bool _ownsClient;
   final RetryPolicy _retryPolicy;
 
@@ -41,9 +40,12 @@ class OtlpHttpSender {
           'content-type': 'application/x-protobuf',
           ..._options.headers,
         };
-        final response = await _client
-            .post(_options.endpoint, headers: headers, body: payload)
-            .timeout(_options.timeout);
+        final response = await _client.post(
+          _options.endpoint,
+          headers: headers,
+          body: payload,
+          timeout: _options.timeout,
+        );
         if (_isSuccess(response.statusCode)) {
           return;
         }

@@ -17,6 +17,7 @@ dependencies:
     path: ../opentelemetry
   shared:
     path: ../shared
+  web: ^1.1.0
     
 dev_dependencies:
   lints: ^3.0.0

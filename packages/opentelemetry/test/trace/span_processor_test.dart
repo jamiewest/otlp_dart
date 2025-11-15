@@ -68,13 +68,10 @@ class _TestSpan implements ReadableSpan {
       DateTime? timestamp}) {}
 
   @override
-  void setAttribute(String key, AttributeValue value) {}
+  void setAttribute(String key, AttributeValue? value) {}
 
   @override
-  void setAttributes(Map<String, AttributeValue> attributes) {}
-
-  @override
-  void setStatus(Status status, {String? description}) {}
+  void setStatus(Status status) {}
 
   @override
   void updateName(String name) {}

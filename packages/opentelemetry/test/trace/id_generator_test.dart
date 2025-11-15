@@ -1,5 +1,4 @@
 import 'package:opentelemetry/opentelemetry.dart';
-import 'package:opentelemetry_api/opentelemetry_api.dart';
 import 'package:test/test.dart';
 
 void main() {

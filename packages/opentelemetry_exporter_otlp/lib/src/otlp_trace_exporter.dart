@@ -1,8 +1,7 @@
 import 'dart:typed_data';
 
-import 'package:grpc/grpc.dart';
-import 'package:http/http.dart' as http;
 import 'package:opentelemetry/opentelemetry.dart';
+import 'package:grpc/src/client/method.dart' show ClientMethod;
 import 'package:shared/shared.dart';
 import 'package:otlp_dart/src/proto/opentelemetry/proto/collector/trace/v1/trace_service.pb.dart'
     as otlp_trace_service;
@@ -11,11 +10,12 @@ import 'otlp_encoding.dart';
 import 'otlp_grpc_sender.dart';
 import 'otlp_http_sender.dart';
 import 'otlp_options.dart';
+import 'transport/http_client/http_client.dart';
 
 class OtlpTraceExporter extends SpanExporter {
   OtlpTraceExporter({
     OtlpExporterOptions? options,
-    http.Client? httpClient,
+    HttpClient? httpClient,
     RetryPolicy? retryPolicy,
   }) : _options = options ?? OtlpExporterOptions.forSignal(OtlpSignal.traces) {
     if (_options.protocol == OtlpProtocol.grpc) {
